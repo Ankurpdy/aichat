@@ -15,4 +15,4 @@ lines.append("def home(request):")
 lines.append("    sessions = ChatSession.objects.filter(user=request.user)")
 lines.append("    active_session = None")
 lines.append("    session_id = request.GET.get('session')")
-lines.append("    if session_id
+lines.append("    if session_id")
