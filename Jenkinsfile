@@ -35,48 +35,47 @@ pipeline {
             }
         }
 
-        stage('Deploy ZIP to EC2 via SSH/SCP') {
-            steps {
-                withCredentials([sshUserPrivateKey(credentialsId: SSH_CRED_ID, keyFileVariable: 'KEY_FILE', usernameVariable: 'KEY_USER')]) {
-                    sh """
-                        # Restrict private key permissions
-                        chmod 600 \${KEY_FILE}
+       stage('Deploy ZIP to EC2 via SSH/SCP') {
+         steps {
+           withCredentials([sshUserPrivateKey(credentialsId: SSH_CRED_ID, keyFileVariable: 'KEY_FILE', usernameVariable: 'KEY_USER')]) {
+            sh """
+                chmod 600 \${KEY_FILE}
 
-                        # Copy application archive to EC2 using temporary key file
-                        scp -i \${KEY_FILE} -o StrictHostKeyChecking=no chatbot_app.zip ${EC2_USER}@${EC2_HOST}:/tmp/chatbot_app.zip
+                # Copy to home directory instead of /tmp/
+                scp -i \${KEY_FILE} -o StrictHostKeyChecking=no chatbot_app.zip ${EC2_USER}@${EC2_HOST}:/home/ubuntu/chatbot_app.zip
 
-                        # Unpack archive and update services on EC2
-                        ssh -i \${KEY_FILE} -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '''
-                            set -e
+                ssh -i \${KEY_FILE} -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '''
+                    set -e
 
-                            if ! command -v unzip &> /dev/null; then
-                                sudo apt update && sudo apt install -y unzip
-                            fi
+                    if ! command -v unzip &> /dev/null; then
+                        sudo apt update && sudo apt install -y unzip
+                    fi
 
-                            unzip -o /tmp/chatbot_app.zip -d ${APP_DIR}
-                            rm -f /tmp/chatbot_app.zip
+                    # Unpack from home directory
+                    unzip -o /home/ubuntu/chatbot_app.zip -d ${APP_DIR}
+                    rm -f /home/ubuntu/chatbot_app.zip
 
-                            cd ${APP_DIR}
+                    cd ${APP_DIR}
 
-                            if [ ! -d "venv" ]; then
-                                python3 -m venv venv
-                            fi
+                    if [ ! -d "venv" ]; then
+                        python3 -m venv venv
+                    fi
 
-                            source venv/bin/activate
-                            pip install --upgrade pip
-                            pip install -r req.txt
+                    source venv/bin/activate
+                    pip install --upgrade pip
+                    pip install -r req.txt
 
-                            python manage.py migrate --noinput
-                            python manage.py collectstatic --noinput
+                    python manage.py migrate --noinput
+                    python manage.py collectstatic --noinput
 
-                            sudo systemctl daemon-reload
-                            sudo systemctl restart gunicorn
-                            sudo systemctl restart nginx
-                        '''
-                    """
-                }
-            }
+                    sudo systemctl daemon-reload
+                    sudo systemctl restart gunicorn
+                    sudo systemctl restart nginx
+                '''
+            """
         }
+    }
+}
     }
 
     post {
