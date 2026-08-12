@@ -2,10 +2,10 @@ pipeline {
     agent any
 
     environment {
-        EC2_HOST    = '32.236.187.104'  // Replace with your EC2 Public IP
+        EC2_HOST    = '32.236.187.104'  // Replace with EC2 Public IP
         EC2_USER    = 'ubuntu'
         APP_DIR     = '/var/www/chatbot_project'
-        SSH_CRED_ID = 'ec2-ssh-key' 
+        SSH_CRED_ID = 'ec2-ssh-key'          // Must match Jenkins Credential ID
     }
 
     stages {
@@ -29,7 +29,6 @@ pipeline {
 
         stage('Package Project to ZIP') {
             steps {
-                // Zip all repository contents while excluding build artifacts & git history
                 sh '''
                     zip -r chatbot_app.zip . -x "*.git*" "venv/*" "__pycache__/*" "*.zip"
                 '''
@@ -38,42 +37,38 @@ pipeline {
 
         stage('Deploy ZIP to EC2 via SSH/SCP') {
             steps {
-                sshagent([SSH_CRED_ID]) {
+                withCredentials([sshUserPrivateKey(credentialsId: SSH_CRED_ID, keyFileVariable: 'KEY_FILE', usernameVariable: 'KEY_USER')]) {
                     sh """
-                        # 1. Transfer ZIP file from Jenkins agent to EC2 server
-                        scp -o StrictHostKeyChecking=no chatbot_app.zip ${EC2_USER}@${EC2_HOST}:/tmp/chatbot_app.zip
+                        # Restrict private key permissions
+                        chmod 600 \${KEY_FILE}
 
-                        # 2. Extract ZIP on EC2 and restart application services
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '''
+                        # Copy application archive to EC2 using temporary key file
+                        scp -i \${KEY_FILE} -o StrictHostKeyChecking=no chatbot_app.zip ${EC2_USER}@${EC2_HOST}:/tmp/chatbot_app.zip
+
+                        # Unpack archive and update services on EC2
+                        ssh -i \${KEY_FILE} -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '''
                             set -e
-                            
-                            # Ensure unzip utility is installed
+
                             if ! command -v unzip &> /dev/null; then
                                 sudo apt update && sudo apt install -y unzip
                             fi
 
-                            # Unpack zip into project directory
                             unzip -o /tmp/chatbot_app.zip -d ${APP_DIR}
                             rm -f /tmp/chatbot_app.zip
 
-                            # Navigate to application folder
                             cd ${APP_DIR}
 
-                            # Re-create virtualenv if it doesn't exist
                             if [ ! -d "venv" ]; then
                                 python3 -m venv venv
                             fi
 
-                            # Activate virtualenv & install dependencies
                             source venv/bin/activate
                             pip install --upgrade pip
                             pip install -r req.txt
 
-                            # Run Django management commands
                             python manage.py migrate --noinput
                             python manage.py collectstatic --noinput
 
-                            # Restart Web Servers
                             sudo systemctl daemon-reload
                             sudo systemctl restart gunicorn
                             sudo systemctl restart nginx
@@ -86,7 +81,6 @@ pipeline {
 
     post {
         always {
-            // Clean up workspace on Jenkins server
             cleanWs()
         }
     }
