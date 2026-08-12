@@ -2,20 +2,15 @@ pipeline {
     agent any
 
     environment {
-        // IP address or Private IP of your EC2 instance
-        EC2_HOST    = 'YOUR_EC2_PUBLIC_OR_PRIVATE_IP' 
-        // Default user for Ubuntu EC2 instances
-        EC2_USER    = 'ubuntu' 
-        // Folder on EC2 where project lives
-        APP_DIR     = '/var/www/chatbot_project' 
-        // ID of the SSH key added in Jenkins Credentials
+        EC2_HOST    = 'YOUR_EC2_PUBLIC_IP'  // Replace with your EC2 Public IP
+        EC2_USER    = 'ubuntu'
+        APP_DIR     = '/var/www/chatbot_project'
         SSH_CRED_ID = 'ec2-ssh-key' 
     }
 
     stages {
         stage('Checkout') {
             steps {
-                // Pulls the latest code from your main branch
                 git branch: 'main', url: 'https://github.com/Ankurpdy/aichat.git'
             }
         }
@@ -32,26 +27,53 @@ pipeline {
             }
         }
 
-        stage('Deploy to EC2 via SSH') {
+        stage('Package Project to ZIP') {
+            steps {
+                // Zip all repository contents while excluding build artifacts & git history
+                sh '''
+                    zip -r chatbot_app.zip . -x "*.git*" "venv/*" "__pycache__/*" "*.zip"
+                '''
+            }
+        }
+
+        stage('Deploy ZIP to EC2 via SSH/SCP') {
             steps {
                 sshagent([SSH_CRED_ID]) {
                     sh """
+                        # 1. Transfer ZIP file from Jenkins agent to EC2 server
+                        scp -o StrictHostKeyChecking=no chatbot_app.zip ${EC2_USER}@${EC2_HOST}:/tmp/chatbot_app.zip
+
+                        # 2. Extract ZIP on EC2 and restart application services
                         ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '''
                             set -e
+                            
+                            # Ensure unzip utility is installed
+                            if ! command -v unzip &> /dev/null; then
+                                sudo apt update && sudo apt install -y unzip
+                            fi
+
+                            # Unpack zip into project directory
+                            unzip -o /tmp/chatbot_app.zip -d ${APP_DIR}
+                            rm -f /tmp/chatbot_app.zip
+
+                            # Navigate to application folder
                             cd ${APP_DIR}
 
-                            # Pull latest changes onto the EC2 server
-                            git pull origin main
+                            # Re-create virtualenv if it doesn't exist
+                            if [ ! -d "venv" ]; then
+                                python3 -m venv venv
+                            fi
 
-                            # Activate virtual environment & install requirements
+                            # Activate virtualenv & install dependencies
                             source venv/bin/activate
+                            pip install --upgrade pip
                             pip install -r req.txt
 
-                            # Run Django management tasks
+                            # Run Django management commands
                             python manage.py migrate --noinput
                             python manage.py collectstatic --noinput
 
-                            # Restart WSGI server and Reverse Proxy
+                            # Restart Web Servers
                             sudo systemctl daemon-reload
                             sudo systemctl restart gunicorn
                             sudo systemctl restart nginx
@@ -64,6 +86,7 @@ pipeline {
 
     post {
         always {
+            // Clean up workspace on Jenkins server
             cleanWs()
         }
     }
