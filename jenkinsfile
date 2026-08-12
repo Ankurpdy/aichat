@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        EC2_HOST    = 'YOUR_EC2_PUBLIC_IP'  // Replace with your EC2 Public IP
+        EC2_HOST    = '32.236.187.104'  // Replace with your EC2 Public IP
         EC2_USER    = 'ubuntu'
         APP_DIR     = '/var/www/chatbot_project'
         SSH_CRED_ID = 'ec2-ssh-key' 
